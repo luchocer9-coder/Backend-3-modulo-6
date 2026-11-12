@@ -322,3 +322,89 @@ La configuración de Swagger está separada de las rutas:
 - **Los endpoints de carga de mocks no llevan body:** la cantidad se envía en el parámetro `qty`. Con `NODE_ENV=production` responden `403`.
 - **Para asignar un repartidor,** usar `PATCH /api/deliveries/{id}/status` con `status: ASSIGNED` y el id de un usuario con rol `DRIVER`.
 - **Cualquier ruta que no exista** responde `404 ROUTE_NOT_FOUND` con el formato de error común.
+
+## Testing
+
+La API tiene una suite de tests funcionales que prueba los endpoints como lo haría un cliente: hace peticiones HTTP y valida el status, la estructura del body y sus propiedades importantes.
+
+### Herramientas
+
+| Herramienta | Para qué se usa |
+|---|---|
+| [Mocha](https://mochajs.org/) | Organiza y ejecuta los tests (`describe`, `it` y hooks como `beforeEach`) |
+| [Chai](https://www.chaijs.com/) | Valida los resultados con `expect` |
+| [Supertest](https://github.com/ladjs/supertest) | Hace peticiones HTTP a la app sin levantar el servidor |
+| [cross-env](https://github.com/kentcdodds/cross-env) | Define `NODE_ENV=test` de la misma forma en Windows, Mac y Linux |
+
+La app de Express (`src/app.js`) está separada del arranque del servidor (`src/server.js`), así los tests la importan directamente sin abrir un puerto.
+
+### Base de datos y variables de entorno
+
+Los tests **necesitan una base de datos de testing separada**, porque crean y borran datos.
+
+1. Crear un archivo `.env.test` en la raíz, a partir de `.env.test.example`:
+
+   ```text
+   PORT=8081
+   MONGODB_URI=mongodb+srv://USUARIO:CONTRASEÑA@cluster0.xxxxx.mongodb.net/shipnow-test?appName=Cluster0
+   NODE_ENV=test
+   ```
+
+2. El nombre de la base **tiene que terminar en `-test`**. Si no, los tests no arrancan, para evitar borrar datos reales.
+
+| Variable | Valor en testing |
+|---|---|
+| `PORT` | Cualquier puerto. Los tests no abren el servidor, pero la variable es obligatoria |
+| `MONGODB_URI` | URI de una base que termine en `-test`, por ejemplo `shipnow-test` |
+| `NODE_ENV` | `test` |
+
+`.env.test` está en `.gitignore`, igual que `.env`.
+
+Con `NODE_ENV=test`:
+
+- La configuración carga `.env.test` en lugar de `.env`.
+- El logger no escribe en la consola, para que se lea el resultado de Mocha. Los archivos de `logs/` se siguen escribiendo.
+
+### Cómo ejecutar los tests
+
+```bash
+npm test
+```
+
+La configuración de Mocha está en `.mocharc.json`: busca los archivos `tests/**/*.test.js` y carga primero `tests/setup.js`.
+
+### Organización
+
+```text
+tests/
+├── setup.js            # Conecta a la base de testing y la limpia al empezar y al terminar
+├── helpers.js          # Datos de prueba, limpieza y validación del formato de error
+├── users.test.js
+├── orders.test.js
+├── deliveries.test.js
+├── mocks.test.js
+├── logger.test.js
+├── docs.test.js        # Swagger y coherencia entre la documentación y la API
+└── general.test.js     # Health check y ruta inexistente
+```
+
+### Módulos cubiertos
+
+| Módulo | Casos de éxito | Casos de error |
+|---|---|---|
+| Users | Listar (vacío y con datos), crear, obtener por id | Datos incompletos, contraseña inválida, email repetido, usuario inexistente, id inválido |
+| Orders | Listar, crear con total calculado y su entrega, obtener por id, cambiar estado | Sin items, sin dirección, usuario repartidor o inexistente, JSON inválido, pedido inexistente, id inválido, estado inválido o no permitido |
+| Deliveries | Listar, obtener por id, asignar repartidor, llegar a `DELIVERED` | Asignar sin repartidor o con un cliente, estado no permitido, entrega inexistente, id inválido |
+| Mocks | Generar usuarios, repartidores y pedidos relacionados; insertar usuarios y datasets | Cantidad negativa, no numérica, decimal, cero o mayor a 100, sin guardar nada |
+| Logger | Genera los 6 niveles y responde la estructura esperada | Método no permitido |
+| Swagger | La página carga y contiene la documentación de ShipNow | Ruta inexistente |
+
+Los errores se validan con el formato del módulo de errores: status HTTP, `code` y `message` del diccionario, `details`, `path` y `timestamp`.
+
+**Coherencia con Swagger:** `docs.test.js` recorre todos los endpoints documentados en `src/docs/openapi.js`, comprueba que existen y que responden con alguno de los status documentados.
+
+### Datos de prueba y limpieza
+
+- **Los datos se crean dentro de cada test,** con los helpers (`createClient`, `createDriver`, `createOrder`) o con los endpoints de mocks. No se usan datos cargados a mano.
+- **Antes de cada test** (`beforeEach`), se borran usuarios, productos, pedidos y entregas de la base de testing. Así cada test arranca desde cero y no depende del orden ni de lo que hizo otro test.
+- **Al empezar y al terminar la suite** (`tests/setup.js`), también se limpia la base. Se puede correr `npm test` varias veces seguidas sin borrar nada a mano.

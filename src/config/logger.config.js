@@ -59,6 +59,8 @@ export const logger = winston.createLogger({
   transports: [
     new winston.transports.Console({
       level: MIN_LEVEL,
+      // Durante los tests la consola queda en silencio para que se lea el resultado de Mocha
+      silent: config.isTest,
       format: config.isProduction ? combine(baseFormat, line) : combine(baseFormat, colorize(), line),
     }),
     // Solo error y fatal, y los errores que nadie atrapó
